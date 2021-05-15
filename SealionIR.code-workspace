@@ -2,7 +2,16 @@
 	"folders": [
 		{
 			"path": "."
-		}
+		}		
 	],
-	"settings": {}
+	"settings": {
+		"files.associations": {
+			"cstdlib": "cpp",
+			"algorithm": "cpp",
+			"cstdio": "cpp",
+			"common.h": "c",
+			"config.h": "c",
+			"check_config.h": "c"
+		}
+	}
 }

@@ -101,12 +101,12 @@ const uint32_t kMqttReconnectTime = 5000;  // Delay(ms) between reconnect tries.
 #define MQTT_CLIMATE_CMND "cmnd"  // Sub-topic for the climate command topics.
 #define MQTT_CLIMATE_STAT "stat"  // Sub-topic for the climate stat topics.
 // Enable sending/receiving climate via JSON. `true` cost ~5k of program space.
-#define MQTT_CLIMATE_JSON true // windfat hack false
+#define MQTT_CLIMATE_JSON true // david hack false
 // Use Home Assistant-style operation modes.
 // i.e. Change the climate mode to "off" when turning the power "off".
 // See: https://www.home-assistant.io/components/climate.mqtt/#modes
 // Change to false, if your home automation system doesn't like this.
-#define MQTT_CLIMATE_HA_MODE false // windfat hacktrue
+#define MQTT_CLIMATE_HA_MODE false // david hacktrue
 // Do we send an IR message when we reboot and recover the existing A/C state?
 // If set to `false` you may miss requested state changes while the ESP was
 // down. If set to `true`, it will resend the previous desired state sent to the
@@ -149,8 +149,8 @@ const uint8_t kCaptureTimeout = 15;  // Milliseconds
 #endif  // DECODE_AC
 // Ignore unknown messages with <10 pulses (see also REPORT_UNKNOWNS)
 const uint16_t kMinUnknownSize = 2 * 10;
-#define REPORT_UNKNOWNS true // windfat hack, false  // Report inbound IR messages that we don't know.
-#define REPORT_RAW_UNKNOWNS true // windfat hack false  // Report the whole buffer, recommended:
+#define REPORT_UNKNOWNS true // david hack, false  // Report inbound IR messages that we don't know.
+#define REPORT_RAW_UNKNOWNS true // david hack false  // Report the whole buffer, recommended:
                                    // MQTT_MAX_PACKET_SIZE of 1024 or more
 
 // Should we use and report individual A/C settings we capture via IR if we
@@ -278,6 +278,8 @@ const char* kHostnameKey = "hostname";
 const char* kHttpUserKey = "http_user";
 const char* kHttpPassKey = "http_pass";
 const char* kCommandDelimiter = ",";
+//windfat hack
+const char* kMqttSecret = "mqtt_secret";
 
 // URLs
 const char* kUrlRoot = "/";
@@ -292,6 +294,7 @@ const char* kUrlReboot = "/quitquitquit";
 const char* kUrlWipe = "/reset";
 const char* kUrlClearMqtt = "/clear_retained";
 const char*  kUrlSendIoTDiscovery = "/sealion_iot_send_discovery";
+const char*  kUrlVerifyIoTServer = "/sealion_verify_server";
 
 #if MQTT_ENABLE
 const uint32_t kBroadcastPeriodMs = MQTTbroadcastInterval * 1000;  // mSeconds.

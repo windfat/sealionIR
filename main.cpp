@@ -359,6 +359,22 @@
 #include <IRac.h>
 #if MQTT_ENABLE
 #include <PubSubClient.h>
+
+//windfat hack
+#include <ESP8266HTTPClient.h>
+
+//#define MBEDTLS_PK_PARSE_C 1
+//#define MBEDTLS_RSA_C 1
+//#define MBEDTLS_FS_IO 1
+  //key.txt
+const char server_cert_buf2[] PROGMEM =  R"EOF(
+-----BEGIN PUBLIC KEY-----
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC7avUeLXiHBskDRLyXWR6mvaIq
+W1CjExfwsy2uahC+LwPvpCJ7xRNQNIFoLhm4HaOhAu+BzQPVzeWIb1nLe0QlKH63
+cgA8KdGlm1sk1T5rkkZ4Gqtsm8MeObJWxKZ015BgQNjpwHPHNDGwjrFViqg3QDmy
+IPJly6KjliKZgyV81QIDAQAB
+-----END PUBLIC KEY-----
+)EOF";
 // --------------------------------------------------------------------
 // * * * IMPORTANT * * *
 // You must change <PubSubClient.h> to have the following value.
@@ -373,6 +389,26 @@
 #include <algorithm>  // NOLINT(build/include)
 #include <memory>
 #include <string>
+
+//windfat hack
+#include "IRbutton.h"
+//Windfat hack
+#include "mbedtls/config_esp.h"
+#include "mbedtls/pk.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/entropy.h"
+
+mbedtls_pk_context pk;
+mbedtls_entropy_context entropy;
+mbedtls_ctr_drbg_context ctr_drbg;
+const unsigned char* input = reinterpret_cast<const unsigned char *>( "Hello. This is initial data" );
+const unsigned char* personalization = reinterpret_cast<const unsigned char *>( "BEEF12345" );
+unsigned char RSA_encrypt_outbuf[MBEDTLS_MPI_MAX_SIZE];
+char RSA_encrypt_in_base64_outbuf[MBEDTLS_MPI_MAX_SIZE];
+const unsigned char* server_cert_buf = reinterpret_cast<const unsigned char *>( server_cert_buf2);
+size_t RSA_encrypt_olen = 0;
+
+//end of windfat hack
 
 using irutils::msToString;
 
@@ -440,15 +476,20 @@ uint32_t mqttRecvCounter = 0;
 
 //windfat hack
 uint32_t newDeviceRegNum = 0;
-
+IRbutton *IObutton;
+int IObuttonState = 0;
 
 bool wasConnected = true;
 
-char MqttServer[kHostnameLength + 1] = "10.0.0.4";
+//char MqttServer[kHostnameLength + 1] = "10.0.0.4";
+//windfat hack
+char MqttServer[kHostnameLength + 1] = "windfat.com";
 char MqttPort[kPortLength + 1] = "1883";
 char MqttUsername[kUsernameLength + 1] = "";
 char MqttPassword[kPasswordLength + 1] = "";
 char MqttPrefix[kHostnameLength + 1] = "";
+//windfat hack
+char MqttSecret[kHostnameLength + 1] = "NotSet";
 
 String MqttAck;  // Sub-topic we send back acknowledgements on.
 String MqttSend;  // Sub-topic we get new commands from.
@@ -504,6 +545,18 @@ bool isSerialGpioUsedByIr(void) {
   return false;  // Not in use as far as we can tell.
 }
 
+extern "C" {
+
+void todebug(char *str) {
+   char debuf[500];
+   memset(debuf, 0, sizeof(debuf));
+   sprintf(debuf, str);
+   debug(debuf);
+
+}
+
+}
+
 // Debug messages get sent to the serial port.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -542,6 +595,7 @@ bool mountSpiffs(void) {
 
 bool saveConfig(void) {
   debug("Saving the config.");
+  debug(MqttSecret);
   bool success = false;
   DynamicJsonDocument json(kJsonConfigMaxSize);
 #if MQTT_ENABLE
@@ -554,6 +608,8 @@ bool saveConfig(void) {
   json[kHostnameKey] = Hostname;
   json[kHttpUserKey] = HttpUsername;
   json[kHttpPassKey] = HttpPassword;
+  //windfat hack
+  json[kMqttSecret] = MqttSecret;
 #if IR_RX
   json[KEY_RX_GPIO] = static_cast<int>(rx_gpio);
 #endif  // IR_RX
@@ -606,6 +662,9 @@ bool loadConfigFile(void) {
           strncpy(Hostname, json[kHostnameKey] | "", kHostnameLength);
           strncpy(HttpUsername, json[kHttpUserKey] | "", kUsernameLength);
           strncpy(HttpPassword, json[kHttpPassKey] | "", kPasswordLength);
+          //windfat hack
+          strncpy(MqttSecret, json[kMqttSecret] | "", kHostnameLength);
+          debug(("Load_config MqttSecret = " + String(MqttSecret)).c_str());
           // Read in the GPIO settings.
 #if IR_RX
           // Single RX gpio
@@ -737,7 +796,7 @@ void handleRoot(void) {
     return server.requestAuthentication();
   }
 #endif
-  String html = htmlHeader(F("David ESP IR MQTT Server"));
+  String html = htmlHeader(F("Windfat Sealion IR Local Server"));
   html += F("<center><small><i>" _MY_VERSION_ "</i></small></center>");
   html += htmlMenu();
   html += F(
@@ -1513,6 +1572,41 @@ void handleReboot() {
   doRestart("Reboot requested");
 }
 
+//Web handle Sealion IoT Server verification of onboarding
+void handleSealionVerifyServer() {
+
+  String html = htmlHeader(F("sealion IoT onboarding verfification"));
+  String kUrlsealionIoTserver = "www.windfat.com/welcome.php";
+  String RegNum = String(newDeviceRegNum);
+  
+  //html += htmlMenu();
+  html +=
+    "<h3>Sealion IoT Onboarding</h3>"
+    "<p>Hostname: " + String(Hostname) + "<br>"
+    "IP address: " + WiFi.localIP().toString() + "<br>"
+    "MAC address: " + WiFi.macAddress() + "<br>"
+    "Booted: " + timeSince(1) + "<br>" +
+    "Version: " _MY_VERSION_ "<br>"
+    "Built: " __DATE__
+      " " __TIME__ "<br>"
+    "Period Offset: " + String(offset) + "us<br>"
+    "IR Lib Version: " _IRREMOTEESP8266_VERSION_ "<br>"
+     "Client id: " + MqttClientId + "<br>"
+     "RegisterNum:" + RegNum + "<br>"
+     "MqttSecretID:" + MqttSecret + "<br>";
+  
+  html += htmlEnd();
+  server.sendHeader("Access-Control-Allow-Origin", "*", true);
+  server.send(200, "text/html", html);
+
+
+  //save the configuration
+  //saveConfig();
+  //reload the setup
+  //setup_wifi();
+}
+
+
 // Parse an Air Conditioner A/C Hex String/code and send it.
 // Args:
 //   irsend: A Ptr to the IRsend object to transmit via.
@@ -1990,13 +2084,124 @@ void handleGpioSetting(void) {
 }
 
 
-//windfat hack
+#if 0
+void connect_windfat(void) {
+
+const char* host = "https://api.github.com";
+uint16_t httpsPort=443;
+HTTPClient http;
+            
+WiFiClientSecure client;
+client.setInsecure(); //the magic line, use with caution
+client.connect(host, httpsPort);
+  
+http.begin(client, host);
+
+String payload, ss;
+int httpCode = http.GET();
+debug(String(httpCode).c_str());
+if ( httpCode == HTTP_CODE_OK)    
+    payload = http.getString(); 
+    debug(payload.c_str());
+  
+}
+#endif
+
+
+#if 1
+
+void do_RSA_encryption_init(void) {
+
+  int ret = 0;
+   char tmpstr[100];
+  
+  mbedtls_entropy_init( &entropy );
+
+  mbedtls_pk_init( &pk );
+
+  mbedtls_ctr_drbg_init( &ctr_drbg );
+
+  ret = mbedtls_ctr_drbg_seed( &ctr_drbg , mbedtls_entropy_func, &entropy, personalization,
+                 sizeof( personalization ) );
+
+  //sprintf(tmpstr, "seed ret = %d", ret);
+  //debug(tmpstr);
+
+  if( ret != 0 )
+  {
+    // ERROR HANDLING CODE FOR YOUR APP
+    debug("mbedtls_ctr_drbg_seed error");
+    debug(tmpstr);
+    return;
+  }
+
+  /*
+   * Read the RSA public key
+  */
+   // if( ( ret = mbedtls_pk_parse_public_keyfile( &pk, "our-key.pub" ) ) != 0 )
+    if ( (ret = mbedtls_pk_parse_public_key( &pk, server_cert_buf, strlen(server_cert_buf2)) ) )
+    {
+      debug(" failed\n  ! mbedtls_pk_parse_public_keyfile returned");
+      return;
+    }
+
+    debug("== 8 ==");
+
+}
+
+#include "base64.h"
+
+void do_RSA_encryption(char *in_data) {
+
+ int ret = 0;
+   
+   char debugbuf[300];
+   unsigned char inBuf[500];
+
+   memset(debugbuf, 0, sizeof(debugbuf));
+   memset(inBuf, 0, sizeof(inBuf));
+   memset(RSA_encrypt_outbuf, 0, sizeof(RSA_encrypt_outbuf));
+  
+   //sprintf((char *)inBuf, "%s", input);
+   sprintf((char *)inBuf, "%s", in_data);
+   //sprintf(debugbuf, "input data len = %d", strlen((char *)inBuf));
+   //debug(debugbuf);
+   /*
+    * Calculate the RSA encryption of the data.
+   */
+   debug( "\n  . Generating the encrypted value" );
+   //fflush( stdout );
+
+   if( ( ret = mbedtls_pk_encrypt( &pk, inBuf, strlen((char *)inBuf),
+                                RSA_encrypt_outbuf, &RSA_encrypt_olen, sizeof(RSA_encrypt_outbuf),
+                                mbedtls_ctr_drbg_random, &ctr_drbg ) ) != 0 )
+   {
+      //printf( " failed\n  ! mbedtls_pk_encrypt returned -0x%04x\n", -ret );
+      debug("failed  ! mbedtls_pk_encrypt returned ");
+      memset(debugbuf, 0, sizeof(debugbuf));
+      sprintf(debugbuf, "ret = %d", ret);
+      debug(debugbuf);
+      return;
+   }
+
+    //debug("RSA encryption complete, encrypted out  length = ");
+    //sprintf(debugbuf, "encrypted data len = %d", RSA_encrypt_olen);
+    //debug(debugbuf);
+    //debug((char *)RSA_encrypt_outbuf);
+    memset(RSA_encrypt_in_base64_outbuf, 0, sizeof(RSA_encrypt_in_base64_outbuf));
+    ret = b64_encode(RSA_encrypt_in_base64_outbuf, (char *)RSA_encrypt_outbuf, RSA_encrypt_olen);
+    //debug(RSA_encrypt_in_base64_outbuf);
+
+}
+
+#endif //RSA
+
 void handleSealionIoTDiscovery(void) {
+
     int iSecret = 0;
     String iSecretStr = " ";
     char tmpstr[50];
-    
-
+   
     debug("handle Sealion IoT Discovery");
 
 
@@ -2043,6 +2248,19 @@ void handleNotFound(void) {
     message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
   server.send(404, "text/plain", message);
 }
+
+void init_mqtt_secret(void) {
+      //random gen the secret
+      /* initialize random seed: */
+      srand (time(NULL));
+      /* generate secret number between 1 and 100: */
+      uint32_t tmpSecret = rand() % 10000 + 1;
+      String ttmp = String(tmpSecret);
+      memset(MqttSecret, 0, sizeof(MqttSecret));
+      strncpy(MqttSecret, ttmp.c_str(), strlen(ttmp.c_str()));
+
+}
+
 
 void setup_wifi(void) {
   delay(10);
@@ -2118,17 +2336,29 @@ void setup_wifi(void) {
   strncpy(HttpUsername, custom_http_username.getValue(), kUsernameLength);
   strncpy(HttpPassword, custom_http_password.getValue(), kPasswordLength);
   if (flagSaveWifiConfig) {
+    //ensure the Mqtt secret is randomly init.
+    init_mqtt_secret();
     saveConfig();
   }
   debug("WiFi connected. IP address:");
   debug(WiFi.localIP().toString().c_str());
 }
 
+
 void init_vars(void) {
 #if MQTT_ENABLE
   // If we have a prefix already, use it. Otherwise use the hostname.
-  //windfat hack
-  MqttUniqueId = WiFi.macAddress();
+  //windfat hack, if MqttPrefix is null, use /sealion/iot/MqttUniqueId
+  debug(MqttSecret);
+  if (strcmp(MqttSecret, "NotSet") == 0) {    
+      init_mqtt_secret();  
+      MqttUniqueId = WiFi.macAddress() + String("00") + MqttSecret;
+      debug(("generate MQTT secret = " + MqttUniqueId).c_str());      
+  }
+  else {
+      MqttUniqueId = WiFi.macAddress() + String("00") + MqttSecret;
+  }
+  
   MqttUniqueId.replace(":", "");
   if (!strlen(MqttPrefix)) { 
       String tempS = "/sealion/iot/" + MqttUniqueId ;
@@ -2196,7 +2426,7 @@ void setup(void) {
       if (IrSendTable[i] != NULL) {
         IrSendTable[i]->begin();
         offset = IrSendTable[i]->calibrate();
-        //windfat hack
+        //Windfat hack
         //IrSendTable[i]->ledOn();
         //delay(1000);
         //IrSendTable[i]->ledOff();
@@ -2265,6 +2495,8 @@ void setup(void) {
   server.on(kUrlGpioSet, handleGpioSetting);
   // Parse and update Discovery to Sealion IoT 
   server.on(kUrlSendIoTDiscovery, handleSealionIoTDiscovery); 
+  // Parse verify server to handle
+  server.on(kUrlVerifyIoTServer, handleSealionVerifyServer);
   
 #if MQTT_ENABLE
 #if MQTT_CLEAR_ENABLE
@@ -2280,6 +2512,13 @@ void setup(void) {
   mqtt_client.setCallback(mqttCallback);
   // Set various variables
   init_vars();
+
+  //windfat hack, enable the input button
+  IObutton = new IRbutton(IRBUTTONPIN);
+  IObutton->begin();
+
+  
+
 #endif  // MQTT_ENABLE
 
 #if FIRMWARE_OTA
@@ -2347,6 +2586,11 @@ void setup(void) {
 
   server.begin();
   debug("HTTP server started");
+
+  //connect_windfat();
+  do_RSA_encryption_init();
+  do_RSA_encryption("test");
+  
 }
 
 #if MQTT_ENABLE
@@ -2550,7 +2794,7 @@ void receivingMQTT(String const topic_name, String const callback_str) {
     return;  // We are done for now.
   }
 
-   //windfat hack
+   //Windfat hack
    if (topic_name.startsWith(String(MqttPrefix) + "/devicediscovery")) {
       debug("device discovery");      
 
@@ -2653,41 +2897,47 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 #if MQTT_DISCOVERY_ENABLE
 
 void sendMQTTIoTDiscovery(const char *topic, String registerNum) {
+  
+  MqttUniqueId = WiFi.macAddress();
+  MqttUniqueId.replace(":", "");
+  int i;
+ 
+  char RSA_key_formatted_1[100];
+  char RSA_key_formatted_2[100];
+  char RSA_key_formatted_3[100];
+  char tmpS[100];
+  String RegNum = String(registerNum);
+     
+
+  sprintf(tmpS, "{ \"RegisterNum\":\"%s\" , \"MqttSecretID\":\"%s\" }", RegNum.c_str(), MqttSecret);
+
+  do_RSA_encryption(tmpS);
+
+  memset(RSA_key_formatted_1, 0, sizeof(RSA_key_formatted_1));
+  memset(RSA_key_formatted_2, 0, sizeof(RSA_key_formatted_2));
+  memset(RSA_key_formatted_3, 0, sizeof(RSA_key_formatted_3));
+
+  memcpy(&RSA_key_formatted_1[0], &RSA_encrypt_in_base64_outbuf[0], 60);
+  memcpy(&RSA_key_formatted_2[0], &RSA_encrypt_in_base64_outbuf[60], 60);
+  memcpy(&RSA_key_formatted_3[0], &RSA_encrypt_in_base64_outbuf[120], 60);
+
+
+  String tmpdata1 = RSA_key_formatted_1;
+  String tmpdata2 = RSA_key_formatted_2;
+  String tmpdata3 = RSA_key_formatted_3;
+
   if (mqtt_client.publish(
       topic, String(
       "{"
-      "\"~\":\"" + MqttClimate + "\","
       "\"name\":\"" + MqttHAName + "\","
       "\"registerNum\":\"" + registerNum + "\","
-      "\"pow_cmd_t\":\"~/" MQTT_CLIMATE_CMND "/" KEY_POWER "\","
-      "\"mode_cmd_t\":\"~/" MQTT_CLIMATE_CMND "/" KEY_MODE "\","
-      "\"mode_stat_t\":\"~/" MQTT_CLIMATE_STAT "/" KEY_MODE "\","
-      // I don't know why, but the modes need to be lower case to work with
-      // Home Assistant & Google Home.
-      "\"modes\":[\"off\",\"auto\",\"cool\",\"heat\",\"dry\",\"fan_only\"],"
-      "\"temp_cmd_t\":\"~/" MQTT_CLIMATE_CMND "/" KEY_TEMP "\","
-      "\"temp_stat_t\":\"~/" MQTT_CLIMATE_STAT "/" KEY_TEMP "\","
-      "\"min_temp\":\"16\","
-      "\"max_temp\":\"30\","
-      "\"temp_step\":\"1\","
-      "\"fan_mode_cmd_t\":\"~/" MQTT_CLIMATE_CMND "/" KEY_FANSPEED "\","
-      "\"fan_mode_stat_t\":\"~/" MQTT_CLIMATE_STAT "/" KEY_FANSPEED "\","
-      "\"fan_modes\":[\"" D_STR_AUTO "\",\"" D_STR_MIN "\",\"" D_STR_LOW "\",\""
-                      D_STR_MEDIUM "\",\"" D_STR_HIGH "\",\"" D_STR_MAX "\"],"
-      "\"swing_mode_cmd_t\":\"~/" MQTT_CLIMATE_CMND "/" KEY_SWINGV "\","
-      "\"swing_mode_stat_t\":\"~/" MQTT_CLIMATE_STAT "/" KEY_SWINGV "\","
-      "\"swing_modes\":[\"" D_STR_OFF "\",\"" D_STR_AUTO "\",\"" D_STR_HIGHEST
-                        "\",\"" D_STR_HIGH "\",\"" D_STR_MIDDLE "\",\""
-                        D_STR_LOW "\",\"" D_STR_LOWEST "\"],"
+      "\"IP_address\" :\"" + WiFi.localIP().toString() + "\","
       "\"uniq_id\":\"" + MqttUniqueId + "\","
-      "\"device\":{"
-        "\"identifiers\":[\"" + MqttUniqueId + "\"],"
-        "\"connections\":[[\"mac\",\"" + WiFi.macAddress() + "\"]],"
-        "\"manufacturer\":\"IRremoteESP8266\","
-        "\"model\":\"IRMQTTServer\","
-        "\"name\":\"" + Hostname + "\","
-        "\"sw_version\":\"" _MY_VERSION_ "\""
-        "}"
+      "\"name\":\"" + Hostname + "\","
+      "\"sw_version\":\"" _MY_VERSION_ "\","
+      "\"encrypt_data1\":\"" + tmpdata1 + "\","
+      "\"encrypt_data2\":\"" + tmpdata2 + "\","
+      "\"encrypt_data3\":\"" + tmpdata3 + "\""
       "}").c_str(), false)) {
     mqttLog("MQTT sealion discovery successful sent.");
     hasDiscoveryBeenSent = true;
@@ -2696,6 +2946,7 @@ void sendMQTTIoTDiscovery(const char *topic, String registerNum) {
   } else {
     mqttLog("MQTT sealion discovery FAILED to send.");
   }
+
 }
 
 void sendMQTTDiscovery(const char *topic) {
@@ -2850,6 +3101,15 @@ void loop(void) {
 #endif  // USE_DECODED_AC_SETTINGS
   }
 #endif  // IR_RX
+
+  //windfat hack
+  IObuttonState = IObutton->read();
+  if (IObuttonState == 0) {
+     debug("IObutton low");
+     handleSealionIoTDiscovery();    
+
+  }
+
   delay(100);
 }
 
