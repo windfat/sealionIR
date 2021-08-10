@@ -498,10 +498,15 @@ String MqttLog;  // Topic we send log messages to.
 String MqttLwt;  // Topic for the Last Will & Testament.
 String MqttClimate;  // Sub-topic for the climate topics.
 String MqttClimateCmnd;  // Sub-topic for the climate command topics.
+
+//windfat hack
+String MqttHeartBeat;
+
 #if MQTT_DISCOVERY_ENABLE
 String MqttDiscovery;
 String MqttUniqueId;
 String MqttSealionIoTDiscovery; //windfat hack
+String MqttSealionIoTHeartbeatReply; //windfat hack
 #endif  // MQTT_DISCOVERY_ENABLE
 String MqttHAName;
 String MqttClientId;
@@ -2364,6 +2369,10 @@ void init_vars(void) {
       String tempS = "/sealion/iot/" + MqttUniqueId ;
       strncpy(MqttPrefix, (const char *)&tempS[0], tempS.length() );
   }
+  else {
+      String tempS = "/sealion/iot/" + MqttUniqueId ;
+      strncpy(MqttPrefix, (const char *)&tempS[0], tempS.length() );
+  }
   //if (!strlen(MqttPrefix)) strncpy(MqttPrefix, Hostname, kHostnameLength);
 
   // Topic we send back acknowledgements on.
@@ -2381,6 +2390,8 @@ void init_vars(void) {
   // Sub-topic for the climate command topics.
   MqttClimateCmnd = MqttClimate + '/' + MQTT_CLIMATE_CMND + '/';
   // Sub-topic for the climate stat topics.
+  MqttHeartBeat = MqttClimate + '/' + "heartbeat";
+  
 #if MQTT_DISCOVERY_ENABLE
   MqttDiscovery = "homeassistant/climate/" + String(Hostname) + "/config";
   MqttUniqueId = WiFi.macAddress();
@@ -2662,6 +2673,7 @@ bool reconnect(void) {
       //windfat hack
       subscribing(String(MqttPrefix) + "/devicediscovery");
       subscribing(String(MqttPrefix) + "/tvcode/cmd/+");
+      subscribing(String(MqttPrefix) + "/heartbeat");
 
       // Per channel topics
       for (uint16_t i = 0; i < kNrOfIrTxGpios; i++) {
@@ -2795,10 +2807,18 @@ void receivingMQTT(String const topic_name, String const callback_str) {
   }
 
    //Windfat hack
-   if (topic_name.startsWith(String(MqttPrefix) + "/devicediscovery")) {
+   if (topic_name.startsWith(String(MqttPrefix) + "/devicediscovery")) { 
       debug("device discovery");      
 
    }
+
+   if (topic_name.startsWith(String(MqttPrefix) + "/heartbeat")) {
+      MqttSealionIoTHeartbeatReply = String(MqttPrefix) + "/heartbeatreply";
+      sendMQTTHeartBeatReply(MqttSealionIoTHeartbeatReply.c_str());
+      debug("heartbeat MQTT");      
+
+   }
+
 
   debug(("Using transmit channel " + String(static_cast<int>(channel)) +
          " / GPIO " + String(static_cast<int>(txGpioTable[channel]))).c_str());
@@ -2993,6 +3013,18 @@ void sendMQTTDiscovery(const char *topic) {
     mqttLog("MQTT climate discovery FAILED to send.");
   }
 }
+
+void sendMQTTHeartBeatReply(const char *topic) {
+  if (mqtt_client.publish(
+      topic, String("heartbeat reply").c_str(), true)) {
+        mqttLog("MQTT heartbeat reply successful sent.");
+      }
+      else {
+        mqttLog("MQTT heartbeat reply FAILED to send.");
+      }
+}
+
+
 #endif  // MQTT_DISCOVERY_ENABLE
 #endif  // MQTT_ENABLE
 

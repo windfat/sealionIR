@@ -337,8 +337,10 @@ bool mountSpiffs(void);
 bool reconnect(void);
 void receivingMQTT(String const topic_name, String const callback_str);
 void callback(char* topic, byte* payload, unsigned int length);
+//windfat hack
 void sendMQTTDiscovery(const char *topic);
 void sendMQTTIoTDiscovery(const char *topic, String RandomNum);
+void sendMQTTHeartBeatReply(const char *topic);
 void doBroadcast(TimerMs *timer, const uint32_t interval,
                  IRac *climates[], const bool retain,
                  const bool force);
